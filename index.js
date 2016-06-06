@@ -81,9 +81,11 @@ GarageDoorAccessory.prototype = {
     return this.isClosed;
   },
 
+  /*
   setState: function(state, callback) {
     this.triggerDoor(callback);
   },
+  */
 
   setFinalDoorState: function() {
     this.getState(function() {
