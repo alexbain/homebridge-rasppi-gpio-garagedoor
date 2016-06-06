@@ -20,25 +20,26 @@ function GarageDoorAccessory(log, config) {
   this.doorOpensInSeconds = config["doorOpensInSeconds"] || 15;
   this.initService();
 
-  // Disabling monitoring door state for now
-  // setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
+  setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
 }
 
 GarageDoorAccessory.prototype = {
 
   monitorDoorState: function() {
-     var isClosed = this.isClosed();
-     if (isClosed != this.wasClosed) {
-       this.wasClosed = isClosed;
-       var state = isClosed ? DoorState.CLOSED : DoorState.OPEN;
-       this.log("Door state changed to " + (isClosed ? "CLOSED" : "OPEN"));
-       if (!this.operating) {
-         this.currentDoorState.setValue(state);
-         this.targetDoorState.setValue(state);
-         this.targetState = state;
+     this.getState(function() {
+       var isClosed = this.isClosed();
+       if (isClosed != this.wasClosed) {
+         this.wasClosed = isClosed;
+         var state = isClosed ? DoorState.CLOSED : DoorState.OPEN;
+         this.log("Door state changed to " + (isClosed ? "CLOSED" : "OPEN"));
+         if (!this.operating) {
+           this.currentDoorState.setValue(state);
+           this.targetDoorState.setValue(state);
+           this.targetState = state;
+         }
        }
-     }
-     setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
+       setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
+     }.bind(this));
   },
 
   initService: function() {
@@ -51,10 +52,14 @@ GarageDoorAccessory.prototype = {
     this.targetDoorState.on('set', this.setState.bind(this));
     this.targetDoorState.on('get', this.getTargetState.bind(this));
 
-    var isClosed = this.isClosed();
+    this.getState(function() {
+      var isClosed = this.isClosed();
 
-    this.currentDoorState.setValue(isClosed ? DoorState.CLOSED : DoorState.OPEN);
-    this.targetDoorState.setValue(isClosed ? DoorState.CLOSED : DoorState.OPEN);
+      this.currentDoorState.setValue(isClosed ? DoorState.CLOSED : DoorState.OPEN);
+      this.targetDoorState.setValue(isClosed ? DoorState.CLOSED : DoorState.OPEN);
+
+      this.wasClosed = isClosed;
+    }.bind(this));
 
     this.infoService = new Service.AccessoryInformation();
     this.infoService
@@ -62,9 +67,8 @@ GarageDoorAccessory.prototype = {
       .setCharacteristic(Characteristic.Model, "Garage Friend")
       .setCharacteristic(Characteristic.SerialNumber, "Version 1.0.0");
 
-    this.wasClosed = isClosed;
     this.operating = false;
-    // setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
+    setTimeout(this.monitorDoorState.bind(this), this.doorPollInMs);
   },
 
   getTargetState: function(callback) {
@@ -79,6 +83,43 @@ GarageDoorAccessory.prototype = {
 
   setState: function(state, callback) {
     this.triggerDoor(callback);
+  },
+
+  setFinalDoorState: function() {
+    this.getState(function() {
+      var isClosed = this.isClosed();
+      if ((this.targetState == DoorState.CLOSED && !isClosed) || (this.targetState == DoorState.OPEN && isClosed)) {
+        this.log("Was trying to " + (this.targetState == DoorState.CLOSED ? " CLOSE " : " OPEN ") + "the door, but it is still " + (isClosed ? "CLOSED":"OPEN"));
+        this.currentDoorState.setValue(DoorState.STOPPED);
+        this.targetDoorState.setValue(isClosed ? DoorState.CLOSED : DoorState.OPEN);
+      } else {
+        this.currentDoorState.setValue(this.targetState);
+      }
+      this.operating = false;
+    }.bind(this));
+  },
+
+  setState: function(state, callback) {
+    this.log("Setting state to " + state);
+    this.targetState = state;
+    var isClosed = this.isClosed();
+    if ((state == DoorState.OPEN && isClosed) || (state == DoorState.CLOSED && !isClosed)) {
+        this.log("Triggering GarageDoor Relay");
+
+        this.operating = true;
+
+        if (state == DoorState.OPEN) {
+            this.currentDoorState.setValue(DoorState.OPENING);
+        } else {
+            this.currentDoorState.setValue(DoorState.CLOSING);
+        }
+
+        this.triggerDoor(callback);
+        setTimeout(this.setFinalDoorState.bind(this), this.doorOpensInSeconds * 1000);
+
+        //fs.writeFileSync("/sys/class/gpio/gpio"+this.doorSwitchPin+"/value", "1");
+        //setTimeout(this.switchOff.bind(this), 1000);
+    }
   },
 
   triggerDoor: function(callback) {
